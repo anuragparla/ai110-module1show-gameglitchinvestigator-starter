@@ -5,8 +5,14 @@ Answer each question in 3 to 5 sentences. Be specific and honest about what actu
 ## 1. What was broken when you started?
 
 - What did the game look like the first time you ran it?
+  When i first ran the game the range of values accepted vs the difficulty level i chose
+  didn't make sense. Also when I entered 1 it would ask me to go LOWER and when I entered 1000 it was asking me to go HIGHER. Also the emojis for HIGHER and LOWER are reversed. The attempts left counter started at 1 instead of 0 thus leaving me with 1 less attempt. Once the game ends the new game button didn't load a new game!
+
 - List at least two concrete bugs you noticed at the start  
-  (for example: "the hints were backwards").
+  1) The range of number within which I can guess seems to be hardcoded. It wasn't changing on the main window eventhough i was choosing a specific difficulty level, the range always remained between 1-100
+  2) The number of attempts left was always 1 less than the total attempts left
+  3) New Game button doesn't load a new game. It just resets the attempts left
+
 
 **Bug Reproduction Log**
 
@@ -14,26 +20,65 @@ Document at least 3 bugs you found. Add rows as needed.
 
 | Input | Expected Behavior | Actual Behavior | Console Output / Error |
 |-------|-------------------|-----------------|------------------------|
-| | | | |
-| | | | |
-| | | | |
+| Select "Normal" difficulty | Range should be 1–50 | Range is 1–100 (Normal and Hard ranges are swapped in `get_range_for_difficulty`) | None |
+| Select "Hard" difficulty | Range should be 1–100 | Range is 1–50 | None |
+| Select "Easy" difficulty | 8 attempts allowed | Only 6 attempts (Easy/Normal attempt limits are swapped) | None |
+| Select "Normal" difficulty | 6 attempts allowed | 8 attempts | None |
+| Choose any non-Normal difficulty and read the "Make a guess" banner | Banner shows the range for the chosen difficulty | Banner always says "between 1 and 100" (range is hardcoded in the f-string) | None |
+| Load the game fresh (before any guess) | "Attempts left" shows n (full limit) | Shows n−1 because `attempts` is initialized to 1 instead of 0 | None |
+| Guess any number that is too high (e.g. secret 50, guess 80) | Hint says "Go LOWER" | Hint says "📈 Go HIGHER!" — message is inverted | None |
+| Guess any number that is too low (e.g. secret 50, guess 20) | Hint says "Go HIGHER" | Hint says "📉 Go LOWER!" — message inverted (emojis reversed too) | None |
+| Submit a guess on an even-numbered attempt (2nd, 4th, …) | Guess compared to the secret normally | Secret is cast to a string, so the correct number never registers as a win and hints become lexicographic nonsense ("9" > "50") | `TypeError: '>' not supported between 'int' and 'str'` caught silently by the except branch |
+| Click "New Game" after a win or game over | A fresh playable game starts | `status` is never reset, so the next guess is blocked by `st.stop()` — game won't accept input | None |
+| Click "New Game" on Hard difficulty | New secret drawn from the Hard range | Secret is always drawn from `randint(1, 100)` (hardcoded), ignoring difficulty | None |
+| Click "New Game" mid-game | Score and guess history reset | Score carries over and history is not cleared | None |
+| Compare fresh-load attempts to post–New Game attempts | Both start at the same baseline | Startup sets `attempts = 1` but New Game sets `attempts = 0` — inconsistent | None |
+| Win the game / make wrong guesses | Score updates consistently and fairly | Win points use `attempt_number + 1` after attempts already incremented (double off-by-one); "Too High" *adds* +5 on even attempts (rewards a wrong guess) | None |
+| Run `pytest tests/` | All tests pass | Tests fail: `logic_utils` functions all `raise NotImplementedError`, and `check_guess` returns a tuple `("Win", "…")` while tests assert it equals the string `"Win"` | `NotImplementedError` / `AssertionError` |
+| Use up all attempts so attempts left would go below 0 | "Attempts left" floors at 0 | Banner can display a negative number (no floor) | None |
+| Enter a decimal guess like `1.9` | Rejected or handled clearly | Silently truncated to `1` | None |
 
 ---
 
 ## 2. How did you use AI as a teammate?
 
-- Which AI tools did you use on this project (for example: ChatGPT, Gemini, Copilot)?
-- Give one example of an AI suggestion that was correct (including what the AI suggested and how you verified the result).
-- Give one example of an AI suggestion that was incorrect or misleading (including what the AI suggested and how you verified the result).
+- **Which AI tools did you use on this project (for example: ChatGPT, Gemini, Copilot)?**
+
+  I used Claude (through the Claude Code assistant inside VS Code). I worked with it as a debugging partner: I described the broken behavior I saw while playing the game, and it read through `app.py` and `logic_utils.py`, found additional bugs I had missed, helped refactor the logic, and generated the pytest cases.
+
+- **An AI suggestion that was CORRECT.**
+
+  *What the AI suggested:* I had only noticed that the hint said "go lower" when the secret was 1. The AI suggested that the real root cause of the "you can never win" problem was a separate line in `app.py` that cast the secret to a string on every even-numbered attempt (`secret = str(st.session_state.secret)`). It explained that comparing an `int` guess to a `str` secret makes `guess == secret` always `False` (so a win never registers on an even attempt) and throws a `TypeError`, which then fell into a fallback branch that compared the numbers as text.
+
+  *Was it correct?* Yes.
+
+  *How I verified it:* I opened the "Developer Debug Info" panel to see the secret, then guessed the exact number on a 2nd/4th attempt — before the fix it refused to register as a win. After removing the string cast and letting `check_guess` always receive the integer secret, that same guess won. I also ran `pytest tests/`, and the cases for `check_guess` (including the "secret of 1" case) all passed (22 passed).
+
+- **An AI suggestion that was INCORRECT or MISLEADING.**
+
+  *What the AI suggested:* While first tagging the bugs, the AI marked the existing test assertions (e.g. `assert check_guess(50, 50) == "Win"`) as a bug location, implying the test was wrong because `check_guess` returns a value that doesn't equal `"Win"`.
+
+  *Was it correct?* It was misleading about *where* the bug was. The test's intent (checking the outcome) was fine — the real issue was that `check_guess` returns a `(outcome, message)` **tuple**, not a bare string, so the assertion needed to compare against the tuple (or index `[0]`), not the function needing to return a plain string.
+
+  *How I verified it:* I checked how `check_guess` is actually used in `app.py` and saw `outcome, message = check_guess(...)` — the app depends on the tuple, so "fixing" the function to return a string would have broken the game. I kept the tuple contract and updated the tests to unpack it (`outcome, _ = check_guess(...)`), then confirmed with `pytest` that all tests passed. This taught me to verify an AI's claim about *which* piece of code is broken, not just accept the first thing it points at.
 
 ---
 
 ## 3. Debugging and testing your fixes
 
-- How did you decide whether a bug was really fixed?
-- Describe at least one test you ran (manual or using pytest)  
-  and what it showed you about your code.
-- Did AI help you design or understand any tests? How?
+- **How did you decide whether a bug was really fixed?**
+
+  I used two checks for every fix: an automated one and a manual one. For the pure logic (ranges, hints, parsing, scoring) I relied on `pytest tests/` — a bug was only "fixed" once a test that asserted the *correct* behavior passed. For the UI/state bugs (attempts counter, banner range, New Game) I ran the app with `python -m streamlit run app.py`, opened the "Developer Debug Info" panel so I could see the real secret, and reproduced the original broken steps to confirm they now behaved correctly. I treated a fix as real only when the exact reproduction I had logged in the Bug Reproduction Log no longer happened.
+
+- **Describe at least one test you ran (manual or using pytest) and what it showed you about your code.**
+
+  *Automated:* I ran `pytest tests/` and got `22 passed`. One case that mattered was `test_secret_of_one_guessing_higher_says_go_lower` — it calls `check_guess(5, 1)` and asserts the message contains "LOWER". Before the fix this would have returned "Go HIGHER!", so the test proved the inverted-hint bug was actually gone, not just hidden. Another, `test_too_high_always_penalises`, checks that a "Too High" guess subtracts points on *both* odd and even attempts, which caught the old +5 reward bug.
+
+  *Manual:* In the running app I set difficulty to Hard, opened Debug Info, and played until "Game over," then clicked **New Game**. Before the fix the game refused my next guess (the `status` was never reset). After the fix, New Game cleared the banners, reset the score to 0, and accepted a new guess — confirming the state actually resets. I also watched "Attempts left" start at the full limit (e.g. 5 on Hard) instead of one less.
+
+- **Did AI help you design or understand any tests? How?**
+
+  Yes. I asked the AI to generate pytest cases covering every bug we had fixed, and it wrote one test per bug with a comment naming the bug it guards against (for example, the decimal-rejection test for `parse_guess("1.9")` and the floor-at-10 test for `update_score`). It also explained *why* the original tests were failing — they asserted `check_guess(...) == "Win"` but the function returns a `(outcome, message)` tuple — which helped me understand that a test can be "red" because of a wrong expectation, not only because of broken code. I verified its tests were meaningful by reading each assertion against the behavior I expected and by confirming they all passed only after the corresponding fix was in place.
 
 ---
 
