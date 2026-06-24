@@ -84,13 +84,22 @@ Document at least 3 bugs you found. Add rows as needed.
 
 ## 4. What did you learn about Streamlit and state?
 
-- How would you explain Streamlit "reruns" and session state to a friend who has never used Streamlit?
+- **How would you explain Streamlit "reruns" and session state to a friend who has never used Streamlit?**
+
+  In Streamlit, every time you interact with the page — click a button, type in a box, change a dropdown — Streamlit re-runs your *entire* Python script from the top, like refreshing a web page. That means any normal variable you create is rebuilt from scratch each time, so it forgets whatever it held a moment ago. `st.session_state` is the workaround: it's a little dictionary that *survives* those reruns, so anything you want to remember between clicks (the secret number, the attempt count, the score, whether the game is over) has to live there. This project drove the lesson home in two ways: the secret number was correctly stored in `session_state` so it persisted, but the "New Game" button looked broken because it reset some session_state values (`attempts`, `secret`) while forgetting others (`status`, `score`, `history`) — so the leftover `status = "won"` survived the rerun and kept blocking new guesses. The fix was simply to reset *all* the relevant session_state in one place. The other gotcha was order: because the script runs top-to-bottom every rerun, the "New Game" handler calls `st.rerun()` after resetting state so the page redraws cleanly with the fresh values.
 
 ---
 
 ## 5. Looking ahead: your developer habits
 
-- What is one habit or strategy from this project that you want to reuse in future labs or projects?
-  - This could be a testing habit, a prompting strategy, or a way you used Git.
-- What is one thing you would do differently next time you work with AI on a coding task?
-- In one or two sentences, describe how this project changed the way you think about AI generated code.
+- **What is one habit or strategy from this project that you want to reuse in future labs or projects?**
+
+  Writing a test for every bug *before* I call it fixed. Instead of just eyeballing the game and assuming a change worked, I wrote a pytest case that asserts the correct behavior (for example, `check_guess(5, 1)` must say "LOWER"), so the bug is locked down and can't quietly come back later. Keeping a written Bug Reproduction Log of the exact input → expected → actual steps also made it obvious when a fix was truly done, because I could re-run the same steps.
+
+- **What is one thing you would do differently next time you work with AI on a coding task?**
+
+  I would push back on the AI's claims about *where* the bug is, sooner. At one point the AI pointed at the test assertion as the broken code, but when I traced how `check_guess` was actually called in `app.py` (`outcome, message = check_guess(...)`), I realized the function's tuple return was correct and the test expectation was the thing that needed updating. If I had blindly "fixed" the function to return a plain string, I would have broken the app. Next time I'll trace the suspect code to its callers before accepting the AI's diagnosis.
+
+- **In one or two sentences, describe how this project changed the way you think about AI-generated code.**
+
+  AI-generated code can look polished and confident — this app literally claimed to be "production-ready" — while being full of subtle, interacting bugs. I now treat AI output as a fast first draft that I have to read, test, and verify myself, rather than something I can trust on sight.

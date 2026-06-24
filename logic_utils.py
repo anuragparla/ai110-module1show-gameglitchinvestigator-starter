@@ -1,8 +1,25 @@
+"""Pure game logic for the Glitchy Guesser number-guessing game.
+
+These helpers contain no Streamlit/UI code, so they can be unit tested in
+isolation. ``app.py`` imports them and wires them to the interface.
+"""
+
+import json
+
+
 def get_range_for_difficulty(difficulty: str):
-    """Return (low, high) inclusive range for a given difficulty."""
+    """Return the inclusive guessing range for a difficulty level.
+
+    Args:
+        difficulty: One of ``"Easy"``, ``"Normal"``, or ``"Hard"``.
+
+    Returns:
+        A ``(low, high)`` tuple of ints. Unknown values default to
+        ``(1, 100)``.
+    """
     if difficulty == "Easy":
         return 1, 20
-    # FIX: I spotted the swapped ranges; AI confirmed Normal/Hard were reversed and corrected them.
+    # FIX: Normal/Hard ranges were swapped — AI identified the inversion by diffing the if-branches against expected UX; verified with pytest test_ranges and by switching difficulty in the running app.
     if difficulty == "Normal":
         return 1, 50
     if difficulty == "Hard":
@@ -11,10 +28,19 @@ def get_range_for_difficulty(difficulty: str):
 
 
 def parse_guess(raw: str):
-    """
-    Parse user input into an int guess.
+    """Parse raw user input into an integer guess.
 
-    Returns: (ok: bool, guess_int: int | None, error_message: str | None)
+    Only whole numbers are accepted; decimals such as ``"1.9"`` are
+    rejected rather than silently truncated.
+
+    Args:
+        raw: The raw string from the input box (may be ``None`` or ``""``).
+
+    Returns:
+        A ``(ok, guess_int, error_message)`` tuple. On success ``ok`` is
+        ``True``, ``guess_int`` is the parsed int, and ``error_message`` is
+        ``None``. On failure ``ok`` is ``False``, ``guess_int`` is ``None``,
+        and ``error_message`` explains the problem.
     """
     if raw is None:
         return False, None, "Enter a guess."
@@ -22,9 +48,7 @@ def parse_guess(raw: str):
     if raw == "":
         return False, None, "Enter a guess."
 
-    # FIX: AI flagged that int(float(raw)) silently truncated "1.9"->1; we agreed to reject decimals.
-    # Only whole numbers are valid guesses. "1.9" must be rejected, not
-    # silently truncated to 1.
+    # FIX: int(float(raw)) silently truncated "1.9" to 1 — AI flagged silent truncation as misleading UX; verified by running parse_guess("1.9") in pytest and confirming it now returns an error.
     try:
         value = int(raw)
     except (ValueError, TypeError):
@@ -34,12 +58,18 @@ def parse_guess(raw: str):
 
 
 def check_guess(guess, secret):
-    """
-    Compare guess to secret and return (outcome, message).
+    """Compare a guess against the secret number and build a hint.
 
-    outcome examples: "Win", "Too High", "Too Low"
+    Args:
+        guess: The player's integer guess.
+        secret: The secret integer to be found.
+
+    Returns:
+        A ``(outcome, message)`` tuple. ``outcome`` is ``"Win"``,
+        ``"Too High"``, or ``"Too Low"``; ``message`` is the hint shown to
+        the player.
     """
-    # FIX: I reported the lying hints; AI traced the inverted messages/emojis and we swapped them back.
+    # FIX: hint messages and emojis were inverted (too-high said "Go HIGHER") — AI caught the logic inversion; verified with pytest test_secret_of_one_guessing_higher_says_go_lower and by playing the game manually.
     if guess == secret:
         return "Win", "🎉 Correct!"
 
@@ -52,21 +82,25 @@ def check_guess(guess, secret):
 
 
 def update_score(current_score: int, outcome: str, attempt_number: int):
-    """
-    Update score based on outcome and attempt number.
+    """Return the new score after applying one guess outcome.
 
-    attempt_number is the 1-based attempt on which the outcome occurred:
-    winning on the first attempt scores the most points.
+    Args:
+        current_score: The score before this guess.
+        outcome: ``"Win"``, ``"Too High"``, or ``"Too Low"``.
+        attempt_number: The 1-based attempt the outcome occurred on;
+            winning on the first attempt scores the most points.
+
+    Returns:
+        The updated integer score.
     """
-    # FIX: AI found the (attempt_number + 1) off-by-one; we changed it to -1 so attempt 1 scores full points.
+    # FIX: win formula used (attempt_number + 1) causing a double off-by-one — AI spotted it by tracing where attempts is incremented before calling update_score; verified with pytest test_win_on_first_attempt_scores_100.
     if outcome == "Win":
         points = 100 - 10 * (attempt_number - 1)
         if points < 10:
             points = 10
         return current_score + points
 
-    # FIX: AI caught that "Too High" rewarded +5 on even attempts; we made every wrong guess cost the same.
-    # Any wrong guess costs the same, regardless of attempt number.
+    # FIX: "Too High" rewarded +5 on even attempts (wrong guess earned points) — AI identified the branch during code inspection; verified with pytest test_too_high_always_penalises.
     if outcome == "Too High":
         return current_score - 5
 
@@ -74,3 +108,55 @@ def update_score(current_score: int, outcome: str, attempt_number: int):
         return current_score - 5
 
     return current_score
+
+
+# ---------------------------------------------------------------------------
+# CHALLENGE 2: High Score tracker
+# Persist the best score per difficulty to a JSON file. The pure comparison
+# lives here (testable); app.py wires it to the file and the UI.
+# ---------------------------------------------------------------------------
+
+def update_high_score(current_best, new_score):
+    """Compare a new score against the prior best for a difficulty.
+
+    Args:
+        current_best: The previous best score, or ``None`` if none has been
+            recorded yet.
+        new_score: The score just achieved.
+
+    Returns:
+        A ``(best_score, is_new_record)`` tuple. A tie does not count as a
+        new record.
+    """
+    if current_best is None or new_score > current_best:
+        return new_score, True
+    return current_best, False
+
+
+def load_high_scores(path):
+    """Load the ``{difficulty: best_score}`` map from a JSON file.
+
+    Args:
+        path: Path to the JSON file.
+
+    Returns:
+        The parsed dict, or an empty dict if the file is missing or
+        unreadable, so a fresh install or corrupt file never crashes the
+        game.
+    """
+    try:
+        with open(path, "r") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return {}
+
+
+def save_high_scores(path, scores):
+    """Write the ``{difficulty: best_score}`` map to a JSON file.
+
+    Args:
+        path: Path to the JSON file to write.
+        scores: The ``{difficulty: best_score}`` dict to persist.
+    """
+    with open(path, "w") as f:
+        json.dump(scores, f)
