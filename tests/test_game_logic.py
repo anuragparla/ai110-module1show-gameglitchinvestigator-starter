@@ -1,9 +1,12 @@
-# FIX: I asked the AI to generate pytest cases covering every bug we fixed; each test below documents one.
+# FIX: AI-generated pytest cases covering every bug fixed; one test each.
 from logic_utils import (
     get_range_for_difficulty,
     parse_guess,
     check_guess,
     update_score,
+    update_high_score,
+    load_high_scores,
+    save_high_scores,
 )
 
 
@@ -153,3 +156,117 @@ def test_too_low_penalises():
 
 def test_unknown_outcome_leaves_score_unchanged():
     assert update_score(100, "Pending", 1) == 100
+
+
+# ===========================================================================
+# CHALLENGE 1: Advanced Edge-Case Testing
+#
+# Three edge-case input categories that could still break the game, each
+# checked end-to-end (parse_guess -> check_guess -> update_score) to confirm
+# the game responds gracefully instead of crashing or behaving incorrectly.
+#   1. Negative numbers        2. Decimals        3. Extremely large values
+# ===========================================================================
+
+# --- Edge case 1: Negative numbers -----------------------------------------
+# A user can type "-5". It must parse as a valid int and be treated as a
+# normal (too-low) guess, never raise an error.
+
+def test_negative_number_parses_as_valid_int():
+    assert parse_guess("-5") == (True, -5, None)
+
+
+def test_negative_guess_is_handled_as_too_low():
+    outcome, message = check_guess(-5, 25)
+    assert outcome == "Too Low"
+    assert "HIGHER" in message.upper()
+
+
+def test_negative_guess_scores_without_crashing():
+    # The full pipeline must run without raising on a negative guess.
+    ok, value, _ = parse_guess("-5")
+    outcome, _ = check_guess(value, 25)
+    assert update_score(0, outcome, 1) == -5
+
+
+# --- Edge case 2: Decimals -------------------------------------------------
+# Decimals are not whole-number guesses. They must be rejected with a clear
+# message, not silently truncated (the original "1.9" -> 1 bug).
+
+def test_positive_decimal_is_rejected():
+    assert parse_guess("3.14") == (False, None, "That is not a number.")
+
+
+def test_whole_number_decimal_is_still_rejected():
+    # "5.0" must not sneak through as 5; only true integers are accepted.
+    assert parse_guess("5.0") == (False, None, "That is not a number.")
+
+
+def test_negative_decimal_is_rejected():
+    assert parse_guess("-2.5") == (False, None, "That is not a number.")
+
+
+# --- Edge case 3: Extremely large values -----------------------------------
+# Python ints are unbounded, so a huge number must not overflow or crash; it
+# should simply register as "Too High" against any in-range secret.
+
+def test_extremely_large_value_parses():
+    ok, value, err = parse_guess("99999999999999999999")
+    assert ok is True
+    assert value == 99999999999999999999
+    assert err is None
+
+
+def test_extremely_large_guess_is_too_high():
+    outcome, message = check_guess(10 ** 100, 50)
+    assert outcome == "Too High"
+    assert "LOWER" in message.upper()
+
+
+def test_extremely_large_guess_scores_without_crashing():
+    ok, value, _ = parse_guess("12345678901234567890")
+    outcome, _ = check_guess(value, 50)
+    assert update_score(0, outcome, 1) == -5
+
+
+# ===========================================================================
+# CHALLENGE 2: High Score tracker
+# Verify the best-score comparison and the JSON save/load round-trip.
+# ===========================================================================
+
+def test_first_score_is_always_a_record():
+    # No prior score recorded -> any score becomes the record.
+    assert update_high_score(None, 70) == (70, True)
+
+
+def test_higher_score_sets_a_new_record():
+    assert update_high_score(50, 70) == (70, True)
+
+
+def test_lower_score_does_not_beat_the_record():
+    assert update_high_score(70, 50) == (70, False)
+
+
+def test_tied_score_is_not_a_new_record():
+    assert update_high_score(70, 70) == (70, False)
+
+
+def test_negative_scores_compare_correctly():
+    # Scores can be negative in this game; -5 still beats -10.
+    assert update_high_score(-10, -5) == (-5, True)
+
+
+def test_high_scores_save_and_load_roundtrip(tmp_path):
+    path = str(tmp_path / "scores.json")
+    save_high_scores(path, {"Normal": 70, "Hard": 80})
+    assert load_high_scores(path) == {"Normal": 70, "Hard": 80}
+
+
+def test_load_missing_file_returns_empty_dict(tmp_path):
+    path = str(tmp_path / "does_not_exist.json")
+    assert load_high_scores(path) == {}
+
+
+def test_load_corrupt_file_returns_empty_dict(tmp_path):
+    path = tmp_path / "corrupt.json"
+    path.write_text("{not valid json")
+    assert load_high_scores(str(path)) == {}
